@@ -71,34 +71,43 @@ cp env.example .env
 
 `.env` 파일을 열고 Firebase 설정 및 기타 환경 변수를 입력합니다.
 
+### 환경 변수 설정
+
+`env.example` 파일을 복사하여 `.env` 파일을 생성하고 필요한 값을 입력하세요:
+
+```bash
+cp env.example .env
+```
+
+| 변수명                        | 설명                                       | 예시                                                            |
+| ----------------------------- | ------------------------------------------ | --------------------------------------------------------------- |
+| PORT                          | 서버가 실행될 포트                         | 3000                                                            |
+| FIREBASE_PROJECT_ID           | Firebase 프로젝트 ID                       | your-project-id                                                 |
+| FIREBASE_CLIENT_EMAIL         | Firebase 서비스 계정 이메일                | your-client-email@example.com                                   |
+| FIREBASE_PRIVATE_KEY          | Firebase 서비스 계정 프라이빗 키           | "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n" |
+| FIREBASE_SERVICE_ACCOUNT_PATH | (선택) Firebase 서비스 계정 JSON 파일 경로 | ./firebase-service-account.json                                 |
+| IOS_BUNDLE_ID                 | iOS 앱 번들 ID                             | com.example.yourapp                                             |
+| APN_KEY_PATH                  | Apple Push Notification 인증 키 파일 경로  | ./AuthKey_XXXXXXXX.p8                                           |
+| APN_KEY_ID                    | Apple Developer 계정에서 발급받은 키 ID    | XXXXXXXX                                                        |
+| APN_TEAM_ID                   | Apple Developer 계정의 팀 ID               | XXXXXXXXXX                                                      |
+
+**참고**: Firebase 설정은 두 가지 방법 중 하나를 선택할 수 있습니다:
+
+1. `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY` 변수 직접 설정
+2. `FIREBASE_SERVICE_ACCOUNT_PATH`에 서비스 계정 JSON 파일 경로 지정
+
 ### Firebase 설정 방법
-
-Firebase 설정은 두 가지 방법으로 가능합니다:
-
-#### 1. 서비스 계정 JSON 파일 사용 (권장)
 
 1. Firebase 콘솔에서 프로젝트 설정 > 서비스 계정 탭으로 이동합니다.
 2. "새 비공개 키 생성" 버튼을 클릭하여 JSON 파일을 다운로드합니다.
 3. 다운로드한 JSON 파일을 프로젝트 루트 디렉토리에 `firebase-service-account.json` 이름으로 저장합니다.
 4. `.env` 파일에서 `FIREBASE_SERVICE_ACCOUNT_PATH` 변수를 설정합니다:
+
    ```
    FIREBASE_SERVICE_ACCOUNT_PATH=./firebase-service-account.json
    ```
 
-#### 2. 환경 변수로 직접 설정
-
-1. Firebase 콘솔에서 프로젝트 설정 > 서비스 계정 탭으로 이동합니다.
-2. "새 비공개 키 생성" 버튼을 클릭하여 JSON 파일을 다운로드합니다.
-3. JSON 파일에서 다음 정보를 찾아 `.env` 파일에 설정합니다:
-   ```
-   FIREBASE_PROJECT_ID=your-project-id
-   FIREBASE_CLIENT_EMAIL=your-client-email@your-project-id.iam.gserviceaccount.com
-   FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nYour Private Key Here\n-----END PRIVATE KEY-----\n"
-   ```
-
-> **주의**: 비공개 키를 환경 변수로 설정할 때는 줄바꿈 문자(`\n`)를 포함하여 정확히 복사해야 합니다.
-
-4. 서버 실행
+5. 서버 실행
 
 ```bash
 # 개발 모드
