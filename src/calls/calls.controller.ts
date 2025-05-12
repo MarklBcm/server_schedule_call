@@ -26,6 +26,7 @@ export class CallsController {
   scheduleCall(
     @Body(new ValidationPipe()) scheduleCallDto: ScheduleCallDto,
   ): ScheduledCall {
+    console.log('scheduleCallDto', scheduleCallDto);
     try {
       return this.callsService.scheduleCall(scheduleCallDto);
     } catch (error) {
@@ -39,18 +40,20 @@ export class CallsController {
    */
   @Get()
   getAllScheduledCalls(): ScheduledCall[] {
+    console.log('getAllScheduledCalls');
     return this.callsService.getAllScheduledCalls();
   }
 
   /**
    * 특정 ID의 예약된 통화 조회 API
-   * @param id 통화 ID
+   * @param uuid 통화 ID
    * @returns 예약된 통화 정보
    */
-  @Get(':id')
-  getScheduledCallById(@Param('id') id: string): ScheduledCall {
+  @Get(':uuid')
+  getScheduledCallById(@Param('uuid') uuid: string): ScheduledCall {
+    console.log('getScheduledCallById', uuid);
     try {
-      return this.callsService.getScheduledCallById(id);
+      return this.callsService.getScheduledCallById(uuid);
     } catch (error) {
       throw new HttpException(error.message, HttpStatus.NOT_FOUND);
     }
@@ -63,6 +66,7 @@ export class CallsController {
    */
   @Delete(':id')
   cancelScheduledCall(@Param('id') id: string): ScheduledCall {
+    console.log('cancelScheduledCall', id);
     try {
       return this.callsService.cancelScheduledCall(id);
     } catch (error) {

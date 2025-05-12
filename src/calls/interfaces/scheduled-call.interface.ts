@@ -5,7 +5,7 @@ export interface ScheduledCall {
   /**
    * 고유 식별자
    */
-  id: string;
+  uuid: string;
 
   /**
    * 통화 예약 시간 (ISO 형식)
@@ -31,6 +31,11 @@ export interface ScheduledCall {
    * 통화 제목 또는 목적
    */
   callPurpose?: string;
+
+  /**
+   * 플랫폼 타입 (iOS는 VoIP, Android는 FCM)
+   */
+  platform: 'ios' | 'android';
 
   /**
    * 통화 상태 (예약됨, 완료됨, 취소됨)

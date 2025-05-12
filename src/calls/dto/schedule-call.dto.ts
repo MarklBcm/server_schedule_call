@@ -3,6 +3,8 @@ import {
   IsString,
   IsDateString,
   IsOptional,
+  IsEnum,
+  IsNumber,
 } from 'class-validator';
 
 /**
@@ -10,12 +12,19 @@ import {
  */
 export class ScheduleCallDto {
   /**
+   * 클라이언트에서 생성한 UUID (선택 사항)
+   */
+  @IsOptional()
+  @IsString()
+  uuid?: string;
+
+  /**
    * 통화 예약 시간 (ISO 형식)
    * @example "2023-06-01T14:30:00+09:00"
    */
   @IsNotEmpty()
-  @IsDateString()
-  scheduledTime: string;
+  @IsNumber()
+  scheduledTime: number;
 
   /**
    * 사용자 디바이스 토큰 (FCM)
@@ -44,4 +53,13 @@ export class ScheduleCallDto {
   @IsOptional()
   @IsString()
   callPurpose?: string;
+
+  /**
+   * 플랫폼 타입 (iOS는 VoIP, Android는 FCM)
+   */
+  @IsNotEmpty()
+  @IsEnum(['ios', 'android'], {
+    message: '플랫폼은 ios 또는 android만 가능합니다.',
+  })
+  platform: 'ios' | 'android';
 }
