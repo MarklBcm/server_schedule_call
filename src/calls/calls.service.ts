@@ -249,7 +249,7 @@ export class CallsService {
         uuid: validUUID, // iOS 앱에서 사용하는 형식으로 수정
         name_caller: call.callerName,
         handle: call.callPurpose || 'Incoming Call',
-        is_video: false,
+        is_video: true,
       };
 
       // 푸시 알림 전송
