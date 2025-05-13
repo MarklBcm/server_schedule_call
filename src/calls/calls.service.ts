@@ -181,6 +181,60 @@ export class CallsService {
   }
 
   /**
+   * 즉시 통화 시작 메서드
+   * @param scheduleCallDto 통화 정보
+   * @returns 시작된 통화 정보
+   */
+  initiateImmediateCall(scheduleCallDto: ScheduleCallDto): ScheduledCall {
+    // 클라이언트에서 제공한 UUID 검증 또는 새로 생성
+    let uuid: string;
+
+    if (scheduleCallDto.uuid && this.isValidUUID(scheduleCallDto.uuid)) {
+      uuid = scheduleCallDto.uuid.toLowerCase();
+    } else {
+      // 클라이언트에서 UUID를 제공하지 않은 경우 새로 생성
+      uuid = this.generateValidUUID();
+      this.logger.warn(
+        `클라이언트에서 UUID가 누락되었습니다. 자동 생성된 UUID: ${uuid}`,
+      );
+    }
+
+    this.logger.log(`즉시 통화 UUID: ${uuid}`);
+
+    // 빈 문자열 방지
+    if (!uuid) {
+      throw new Error('UUID가 누락되었습니다.');
+    }
+
+    // 현재 시간 설정
+    const currentTime = new Date();
+
+    // 통화 객체 생성
+    const scheduledCall: ScheduledCall = {
+      uuid: uuid,
+      scheduledTime: currentTime,
+      deviceToken: scheduleCallDto.deviceToken,
+      callerName: scheduleCallDto.callerName,
+      callerAvatar: scheduleCallDto.callerAvatar,
+      callPurpose: scheduleCallDto.callPurpose,
+      platform: scheduleCallDto.platform,
+      status: 'scheduled',
+    };
+
+    // 통화 저장
+    this.scheduledCalls.set(uuid, scheduledCall);
+
+    // 즉시 통화 시작
+    this.initiateCall(scheduledCall);
+
+    this.logger.log(
+      `즉시 통화가 시작되었습니다. ID: ${uuid}, 시간: ${currentTime}, 플랫폼: ${scheduleCallDto.platform}`,
+    );
+
+    return scheduledCall;
+  }
+
+  /**
    * 통화 시작 메서드
    * @param call 예약된 통화 정보
    */

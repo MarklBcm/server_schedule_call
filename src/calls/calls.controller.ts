@@ -35,6 +35,23 @@ export class CallsController {
   }
 
   /**
+   * 즉시 통화 시작 API
+   * @param scheduleCallDto 통화 정보
+   * @returns 시작된 통화 정보
+   */
+  @Post('immediate')
+  initiateImmediateCall(
+    @Body(new ValidationPipe()) scheduleCallDto: ScheduleCallDto,
+  ): ScheduledCall {
+    console.log('initiateImmediateCall', scheduleCallDto);
+    try {
+      return this.callsService.initiateImmediateCall(scheduleCallDto);
+    } catch (error) {
+      throw new HttpException(error.message, HttpStatus.BAD_REQUEST);
+    }
+  }
+
+  /**
    * 예약된 통화 목록 조회 API
    * @returns 예약된 통화 목록
    */
