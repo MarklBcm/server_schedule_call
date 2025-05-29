@@ -117,32 +117,21 @@ export class CallsController {
   }
 
   /**
-   * 특정 ID의 예약된 통화 조회 API
-   * @param uuid 통화 ID
-   * @returns 예약된 통화 정보
-   */
-  @Get(':id')
-  getScheduledCallById(@Param('uuid') uuid: string): ScheduledCall {
-    console.log('getScheduledCallById', uuid);
-    try {
-      return this.callsService.getScheduledCallById(uuid);
-    } catch (error) {
-      throw new HttpException(error.message, HttpStatus.NOT_FOUND);
-    }
-  }
-
-  /**
-   * 특정 ID의 예약된 통화 취소 API
-   * @param id 통화 ID
+   * 특정 UUID의 예약된 통화 취소 API
+   * @param uuid 통화 UUID (고유 식별자)
    * @returns 취소된 통화 정보
    */
-  @Delete(':id')
-  cancelScheduledCall(@Param('id') id: string): ScheduledCall {
-    console.log('cancelScheduledCall', id);
+  @Delete('schedule/:uuid')
+  cancelScheduledCall(@Param('uuid') uuid: string): ScheduledCall {
+    console.log('cancelScheduledCall', uuid);
+
     try {
-      return this.callsService.cancelScheduledCall(id);
+      return this.callsService.cancelScheduledCall(uuid);
     } catch (error) {
-      throw new HttpException(error.message, HttpStatus.NOT_FOUND);
+      if (error.message.includes('존재하지 않는')) {
+        throw new HttpException(error.message, HttpStatus.NOT_FOUND);
+      }
+      throw new HttpException(error.message, HttpStatus.INTERNAL_SERVER_ERROR);
     }
   }
 }
