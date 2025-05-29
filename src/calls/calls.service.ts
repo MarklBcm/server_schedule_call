@@ -36,17 +36,31 @@ export class CallsService {
       }
     }
 
-    // 클라이언트에서 제공한 UUID 검증 또는 새로 생성
+    // UUID 처리: 클라이언트 제공 UUID 검증 또는 서버에서 자동 생성
     let uuid: string;
 
-    if (scheduleCallDto.uuid && this.isValidUUID(scheduleCallDto.uuid)) {
-      uuid = scheduleCallDto.uuid.toLowerCase();
+    if (scheduleCallDto.uuid?.trim()) {
+      // 클라이언트에서 UUID를 제공한 경우 유효성 검증
+      if (this.isValidUUID(scheduleCallDto.uuid.trim())) {
+        uuid = scheduleCallDto.uuid.toLowerCase().trim();
+        this.logger.log(`클라이언트 제공 UUID 사용: ${uuid}`);
+      } else {
+        // 유효하지 않은 UUID인 경우 서버에서 새로 생성
+        uuid = this.generateValidUUID();
+        this.logger.warn(
+          `클라이언트에서 제공한 UUID가 유효하지 않습니다. 자동 생성된 UUID로 대체: ${uuid}`,
+        );
+      }
     } else {
-      // 클라이언트에서 UUID를 제공하지 않은 경우 새로 생성
+      // 클라이언트에서 UUID를 제공하지 않은 경우 서버에서 새로 생성
       uuid = this.generateValidUUID();
-      this.logger.warn(
-        `클라이언트에서 UUID가 누락되었습니다. 자동 생성된 UUID: ${uuid}`,
-      );
+      this.logger.log(`UUID가 제공되지 않아 서버에서 자동 생성: ${uuid}`);
+    }
+
+    // UUID 중복 검사 및 처리
+    if (this.scheduledCalls.has(uuid)) {
+      uuid = this.generateValidUUID();
+      this.logger.warn(`UUID 중복 발생, 새로운 UUID로 생성: ${uuid}`);
     }
 
     this.logger.log(`예약된 통화 UUID: ${uuid}`);
@@ -107,15 +121,30 @@ export class CallsService {
    * @returns 검증된 UUID 문자열
    */
   private generateValidUUID(): string {
-    const uuid = uuidv4();
+    let attempts = 0;
+    const maxAttempts = 5; // 무한 루프 방지
 
-    if (!this.isValidUUID(uuid)) {
-      this.logger.warn('유효하지 않은 UUID 생성됨, 재시도합니다.');
-      return this.generateValidUUID(); // 재귀적으로 다시 시도
+    while (attempts < maxAttempts) {
+      const uuid = uuidv4().toLowerCase(); // uuidv4는 항상 유효한 UUID를 생성하므로 소문자만 적용
+
+      // 중복 검사
+      if (!this.scheduledCalls.has(uuid)) {
+        this.logger.log(
+          `새로운 UUID 생성 성공: ${uuid} (시도 ${attempts + 1}회)`,
+        );
+        return uuid;
+      }
+
+      attempts++;
+      this.logger.warn(`UUID 중복으로 재시도: ${uuid} (시도 ${attempts}회)`);
     }
 
-    this.logger.log(`생성된 UUID: ${uuid}`);
-    return uuid.toLowerCase(); // 소문자로 통일 (일관성 유지)
+    // 최대 시도 횟수 초과 시 강제로 UUID 생성 (확률적으로 매우 낮음)
+    const fallbackUuid = uuidv4().toLowerCase();
+    this.logger.error(
+      `최대 UUID 생성 시도 횟수 초과, 강제 생성: ${fallbackUuid}`,
+    );
+    return fallbackUuid;
   }
 
   /**
@@ -332,16 +361,34 @@ export class CallsService {
    * @returns 시작된 통화 정보
    */
   initiateImmediateCall(scheduleCallDto: ScheduleCallDto): ScheduledCall {
-    // 클라이언트에서 제공한 UUID 검증 또는 새로 생성
+    // UUID 처리: 클라이언트 제공 UUID 검증 또는 서버에서 자동 생성
     let uuid: string;
 
-    if (scheduleCallDto.uuid && this.isValidUUID(scheduleCallDto.uuid)) {
-      uuid = scheduleCallDto.uuid.toLowerCase();
+    if (scheduleCallDto.uuid?.trim()) {
+      // 클라이언트에서 UUID를 제공한 경우 유효성 검증
+      if (this.isValidUUID(scheduleCallDto.uuid.trim())) {
+        uuid = scheduleCallDto.uuid.toLowerCase().trim();
+        this.logger.log(`즉시 통화 - 클라이언트 제공 UUID 사용: ${uuid}`);
+      } else {
+        // 유효하지 않은 UUID인 경우 서버에서 새로 생성
+        uuid = this.generateValidUUID();
+        this.logger.warn(
+          `즉시 통화 - 클라이언트에서 제공한 UUID가 유효하지 않습니다. 자동 생성된 UUID로 대체: ${uuid}`,
+        );
+      }
     } else {
-      // 클라이언트에서 UUID를 제공하지 않은 경우 새로 생성
+      // 클라이언트에서 UUID를 제공하지 않은 경우 서버에서 새로 생성
+      uuid = this.generateValidUUID();
+      this.logger.log(
+        `즉시 통화 - UUID가 제공되지 않아 서버에서 자동 생성: ${uuid}`,
+      );
+    }
+
+    // UUID 중복 검사 및 처리
+    if (this.scheduledCalls.has(uuid)) {
       uuid = this.generateValidUUID();
       this.logger.warn(
-        `클라이언트에서 UUID가 누락되었습니다. 자동 생성된 UUID: ${uuid}`,
+        `즉시 통화 - UUID 중복 발생, 새로운 UUID로 생성: ${uuid}`,
       );
     }
 

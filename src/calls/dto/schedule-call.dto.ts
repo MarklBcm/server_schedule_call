@@ -13,7 +13,9 @@ import {
  */
 export class ScheduleCallDto {
   /**
-   * 클라이언트에서 생성한 UUID (선택 사항)
+   * 클라이언트에서 생성한 UUID (선택사항)
+   * - 제공하지 않거나 유효하지 않은 경우 서버에서 자동 생성
+   * - iOS CallKit 호환 형식 (RFC 4122 표준)
    */
   @IsOptional()
   @IsUUID()

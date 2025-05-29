@@ -21,8 +21,10 @@ export class CallsController {
 
   /**
    * 통화 예약 API
-   * @param scheduleCallDto 통화 예약 정보
-   * @returns 예약된 통화 정보
+   * - UUID가 제공되지 않거나 유효하지 않은 경우 서버에서 자동 생성
+   * - 기존 예약이 있는 경우 자동으로 취소 후 새로 예약
+   * @param scheduleCallDto 통화 예약 정보 (uuid는 선택사항)
+   * @returns 예약된 통화 정보 (서버 생성 UUID 포함)
    */
   @Post('schedule')
   scheduleCall(
@@ -38,8 +40,10 @@ export class CallsController {
 
   /**
    * 즉시 통화 시작 API
-   * @param scheduleCallDto 통화 정보
-   * @returns 시작된 통화 정보
+   * - UUID가 제공되지 않거나 유효하지 않은 경우 서버에서 자동 생성
+   * - 즉시 VoIP/FCM 푸시 알림을 전송하여 통화 시작
+   * @param scheduleCallDto 통화 정보 (uuid는 선택사항)
+   * @returns 시작된 통화 정보 (서버 생성 UUID 포함)
    */
   @Post('immediate')
   initiateImmediateCall(
