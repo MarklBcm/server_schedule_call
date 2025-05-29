@@ -8,6 +8,11 @@ export interface ScheduledCall {
   uuid: string;
 
   /**
+   * 회원 번호
+   */
+  memberSeq: number;
+
+  /**
    * 통화 예약 시간 (ISO 형식)
    */
   scheduledTime: Date;
@@ -41,4 +46,9 @@ export interface ScheduledCall {
    * 통화 상태 (예약됨, 완료됨, 취소됨)
    */
   status: 'scheduled' | 'completed' | 'cancelled';
+
+  /**
+   * 예약 활성화 여부
+   */
+  enabled: boolean;
 }

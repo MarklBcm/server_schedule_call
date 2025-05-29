@@ -1,16 +1,18 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Cron, SchedulerRegistry } from '@nestjs/schedule';
 import { CronJob } from 'cron';
 import { v4 as uuidv4 } from 'uuid';
 import * as admin from 'firebase-admin';
 import * as apn from 'apn';
 import { ScheduleCallDto } from './dto/schedule-call.dto';
+import { ToggleCallDto } from './dto/toggle-call.dto';
 import { ScheduledCall } from './interfaces/scheduled-call.interface';
 
 @Injectable()
 export class CallsService {
   private readonly logger = new Logger(CallsService.name);
   private scheduledCalls: Map<string, ScheduledCall> = new Map();
+  private memberCallMap: Map<number, string[]> = new Map(); // 회원 번호와 UUID 배열 매핑
 
   constructor(private schedulerRegistry: SchedulerRegistry) {}
 
@@ -20,6 +22,20 @@ export class CallsService {
    * @returns 예약된 통화 정보
    */
   scheduleCall(scheduleCallDto: ScheduleCallDto): ScheduledCall {
+    // 회원이 이미 예약한 통화가 있는지 확인
+    const existingCallUuids = this.memberCallMap.get(scheduleCallDto.memberSeq);
+    if (existingCallUuids && existingCallUuids.length > 0) {
+      // 기존 예약 취소 (첫 번째 통화만 취소)
+      try {
+        this.cancelScheduledCall(existingCallUuids[0]);
+        this.logger.log(
+          `회원 ${scheduleCallDto.memberSeq}의 기존 예약이 취소되었습니다.`,
+        );
+      } catch (error) {
+        this.logger.error(`기존 예약 취소 중 오류 발생: ${error.message}`);
+      }
+    }
+
     // 클라이언트에서 제공한 UUID 검증 또는 새로 생성
     let uuid: string;
 
@@ -42,31 +58,34 @@ export class CallsService {
 
     const scheduledTimeAsDate = new Date(scheduleCallDto.scheduledTime);
 
-    // 현재 시간이 예약 시간보다 이후인지 확인
-    if (scheduledTimeAsDate <= new Date()) {
-      throw new Error('예약 시간은 현재 시간 이후여야 합니다.');
-    }
-
     // 예약된 통화 객체 생성
     const scheduledCall: ScheduledCall = {
       uuid: uuid,
+      memberSeq: scheduleCallDto.memberSeq,
       scheduledTime: scheduledTimeAsDate,
       deviceToken: scheduleCallDto.deviceToken,
       callerName: scheduleCallDto.callerName,
       callerAvatar: scheduleCallDto.callerAvatar,
       callPurpose: scheduleCallDto.callPurpose,
-      platform: scheduleCallDto.platform,
+      platform: scheduleCallDto.platform as 'ios' | 'android',
       status: 'scheduled',
+      enabled: true,
     };
 
     // 예약된 통화 저장
     this.scheduledCalls.set(uuid, scheduledCall);
 
-    // 예약 시간에 실행될 작업 스케줄링
-    this.scheduleCallJob(scheduledCall);
+    // 회원의 통화 목록에 추가
+    if (!this.memberCallMap.has(scheduleCallDto.memberSeq)) {
+      this.memberCallMap.set(scheduleCallDto.memberSeq, []);
+    }
+    this.memberCallMap.get(scheduleCallDto.memberSeq).push(uuid);
+
+    // 매일 같은 시간에 실행될 작업 스케줄링
+    this.scheduleRecurringCallJob(scheduledCall);
 
     this.logger.log(
-      `통화가 예약되었습니다. ID: ${uuid}, 시간: ${new Date(scheduledCall.scheduledTime)}, 플랫폼: ${scheduleCallDto.platform}`,
+      `통화가 예약되었습니다. ID: ${uuid}, 회원: ${scheduleCallDto.memberSeq}, 시간: ${scheduledTimeAsDate.toLocaleTimeString('ko-KR')}, 플랫폼: ${scheduleCallDto.platform}`,
     );
 
     return scheduledCall;
@@ -108,6 +127,30 @@ export class CallsService {
   }
 
   /**
+   * 특정 회원의 예약된 통화 목록 조회
+   * @param memberSeq 회원 번호
+   * @returns 예약된 통화 목록
+   */
+  getScheduledCallsByMemberSeq(memberSeq: number): ScheduledCall[] {
+    const uuids = this.memberCallMap.get(memberSeq);
+    if (!uuids || uuids.length === 0) {
+      throw new NotFoundException(
+        `회원 ${memberSeq}에 해당하는 예약된 통화가 없습니다.`,
+      );
+    }
+
+    return uuids
+      .map((uuid) => {
+        const call = this.scheduledCalls.get(uuid);
+        if (!call) {
+          this.logger.warn(`UUID ${uuid}에 해당하는 통화 정보가 없습니다.`);
+        }
+        return call;
+      })
+      .filter((call) => call !== undefined);
+  }
+
+  /**
    * 특정 ID의 예약된 통화 조회
    * @param uuid 통화 ID
    * @returns 예약된 통화 정보
@@ -115,7 +158,9 @@ export class CallsService {
   getScheduledCallById(uuid: string): ScheduledCall {
     const call = this.scheduledCalls.get(uuid);
     if (!call) {
-      throw new Error(`ID: ${uuid}에 해당하는 예약된 통화가 없습니다.`);
+      throw new NotFoundException(
+        `ID: ${uuid}에 해당하는 예약된 통화가 없습니다.`,
+      );
     }
     return call;
   }
@@ -139,17 +184,102 @@ export class CallsService {
     call.status = 'cancelled';
     this.scheduledCalls.set(uuid, call);
 
-    this.logger.log(`통화가 취소되었습니다. ID: ${uuid}`);
+    // 회원 매핑에서 제거
+    const memberUuids = this.memberCallMap.get(call.memberSeq);
+    if (memberUuids) {
+      const updatedUuids = memberUuids.filter((id) => id !== uuid);
+      if (updatedUuids.length === 0) {
+        this.memberCallMap.delete(call.memberSeq);
+      } else {
+        this.memberCallMap.set(call.memberSeq, updatedUuids);
+      }
+    }
+
+    this.logger.log(
+      `통화가 취소되었습니다. ID: ${uuid}, 회원: ${call.memberSeq}`,
+    );
 
     return call;
   }
 
   /**
-   * 특정 통화에 대한 크론 작업 스케줄링
+   * 특정 회원의 예약된 통화 취소
+   * @param memberSeq 회원 번호
+   * @returns 취소된 통화 정보
+   */
+  cancelScheduledCallByMemberSeq(memberSeq: number): ScheduledCall {
+    const uuids = this.memberCallMap.get(memberSeq);
+    if (!uuids || uuids.length === 0) {
+      throw new NotFoundException(
+        `회원 ${memberSeq}에 해당하는 예약된 통화가 없습니다.`,
+      );
+    }
+
+    // 첫 번째 통화만 취소 (기존 동작 유지)
+    return this.cancelScheduledCall(uuids[0]);
+  }
+
+  /**
+   * 예약 활성화/비활성화 토글
+   * @param toggleCallDto 토글 정보
+   * @returns 업데이트된 통화 정보
+   */
+  toggleScheduledCall(toggleCallDto: ToggleCallDto): ScheduledCall {
+    const { memberSeq, uuid, enabled } = toggleCallDto;
+
+    // uuid가 제공된 경우 해당 통화를 직접 찾기
+    if (uuid) {
+      const call = this.scheduledCalls.get(uuid);
+      if (!call) {
+        throw new NotFoundException(
+          `ID: ${uuid}에 해당하는 예약된 통화가 없습니다.`,
+        );
+      }
+
+      // 회원 번호 검증
+      if (call.memberSeq !== memberSeq) {
+        throw new NotFoundException(
+          `회원 ${memberSeq}에게 권한이 없는 통화입니다. (통화 ID: ${uuid})`,
+        );
+      }
+
+      call.enabled = enabled;
+      this.scheduledCalls.set(uuid, call);
+
+      this.logger.log(
+        `통화 예약이 ${enabled ? '활성화' : '비활성화'}되었습니다. ID: ${uuid}, 회원: ${memberSeq}`,
+      );
+
+      return call;
+    }
+
+    // uuid가 없는 경우 기존 로직 사용 (하위 호환성)
+    const uuids = this.memberCallMap.get(memberSeq);
+    if (!uuids || uuids.length === 0) {
+      throw new NotFoundException(
+        `회원 ${memberSeq}에 해당하는 예약된 통화가 없습니다.`,
+      );
+    }
+
+    // 첫 번째 통화만 토글 (기존 동작 유지)
+    const firstUuid = uuids[0];
+    const call = this.scheduledCalls.get(firstUuid);
+    call.enabled = enabled;
+    this.scheduledCalls.set(firstUuid, call);
+
+    this.logger.log(
+      `통화 예약이 ${enabled ? '활성화' : '비활성화'}되었습니다. ID: ${firstUuid}, 회원: ${memberSeq}`,
+    );
+
+    return call;
+  }
+
+  /**
+   * 특정 통화에 대한 매일 반복 크론 작업 스케줄링
    * @param call 예약된 통화 정보
    */
-  private scheduleCallJob(call: ScheduledCall): void {
-    const { uuid: uuid, scheduledTime } = call; // scheduledTime은 이제 number 타입
+  private scheduleRecurringCallJob(call: ScheduledCall): void {
+    const { uuid, scheduledTime } = call;
 
     // 기존 크론 작업 확인 및 삭제
     try {
@@ -165,18 +295,34 @@ export class CallsService {
       );
     }
 
+    // 매일 같은 시간에 실행되는 크론 표현식 생성
+    const hours = scheduledTime.getHours();
+    const minutes = scheduledTime.getMinutes();
+    const cronExpression = `0 ${minutes} ${hours} * * *`; // 초 분 시 일 월 요일
+
     // 크론 작업 생성
-    const date = new Date(scheduledTime); // 숫자형 타임스탬프를 Date 객체로 변환
-    const job = new CronJob(date, () => {
-      this.initiateCall(call);
-    });
+    const job = new CronJob(
+      cronExpression,
+      () => {
+        // 활성화된 경우에만 통화 시작
+        if (call.enabled) {
+          this.initiateCall(call);
+        } else {
+          this.logger.log(
+            `통화 예약이 비활성화되어 있어 통화가 시작되지 않았습니다. ID: ${uuid}, 회원: ${call.memberSeq}`,
+          );
+        }
+      },
+      null,
+      true,
+      'Asia/Seoul',
+    ); // 한국 시간대 사용
 
     // 스케줄러에 작업 등록
     this.schedulerRegistry.addCronJob(`call-${uuid}`, job);
-    job.start();
 
     this.logger.log(
-      `통화 작업이 스케줄링되었습니다. ID: ${uuid}, 시간: ${new Date(scheduledTime)}`,
+      `매일 반복 통화 작업이 스케줄링되었습니다. ID: ${uuid}, 회원: ${call.memberSeq}, 시간: ${hours}시 ${minutes}분, 크론: ${cronExpression}`,
     );
   }
 
@@ -212,23 +358,31 @@ export class CallsService {
     // 통화 객체 생성
     const scheduledCall: ScheduledCall = {
       uuid: uuid,
+      memberSeq: scheduleCallDto.memberSeq,
       scheduledTime: currentTime,
       deviceToken: scheduleCallDto.deviceToken,
       callerName: scheduleCallDto.callerName,
       callerAvatar: scheduleCallDto.callerAvatar,
       callPurpose: scheduleCallDto.callPurpose,
-      platform: scheduleCallDto.platform,
+      platform: scheduleCallDto.platform as 'ios' | 'android',
       status: 'scheduled',
+      enabled: true,
     };
 
     // 통화 저장
     this.scheduledCalls.set(uuid, scheduledCall);
 
+    // 회원의 통화 목록에 추가
+    if (!this.memberCallMap.has(scheduleCallDto.memberSeq)) {
+      this.memberCallMap.set(scheduleCallDto.memberSeq, []);
+    }
+    this.memberCallMap.get(scheduleCallDto.memberSeq).push(uuid);
+
     // 즉시 통화 시작
     this.initiateCall(scheduledCall);
 
     this.logger.log(
-      `즉시 통화가 시작되었습니다. ID: ${uuid}, 시간: ${currentTime}, 플랫폼: ${scheduleCallDto.platform}`,
+      `즉시 통화가 시작되었습니다. ID: ${uuid}, 회원: ${scheduleCallDto.memberSeq}, 시간: ${currentTime}, 플랫폼: ${scheduleCallDto.platform}`,
     );
 
     return scheduledCall;
@@ -340,9 +494,7 @@ export class CallsService {
     }
 
     // 소문자로 반환 (iOS에서 일관성 있게 처리하기 위함)
-    const newUUID = this.generateValidUUID();
-    this.logger.log(`UUID가 수정되었습니다. 새 UUID: ${newUUID}`);
-    return newUUID;
+    return uuid.toLowerCase();
   }
 
   /**
@@ -404,9 +556,19 @@ export class CallsService {
     for (const [id, call] of this.scheduledCalls.entries()) {
       if (
         (call.status === 'completed' || call.status === 'cancelled') &&
-        call.scheduledTime < twentyFourHoursAgo // 숫자형 타임스탬프 직접 비교
+        call.scheduledTime < twentyFourHoursAgo
       ) {
         this.scheduledCalls.delete(id);
+        // 회원 매핑에서도 제거
+        const memberUuids = this.memberCallMap.get(call.memberSeq);
+        if (memberUuids) {
+          const updatedUuids = memberUuids.filter((uuid) => uuid !== id);
+          if (updatedUuids.length === 0) {
+            this.memberCallMap.delete(call.memberSeq);
+          } else {
+            this.memberCallMap.set(call.memberSeq, updatedUuids);
+          }
+        }
         cleanedCount++;
       }
     }

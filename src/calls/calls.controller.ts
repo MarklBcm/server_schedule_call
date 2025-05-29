@@ -1,16 +1,18 @@
 import {
-  Controller,
-  Post,
   Body,
-  Get,
-  Param,
+  Controller,
   Delete,
+  Get,
   HttpException,
   HttpStatus,
+  Param,
+  Post,
+  Query,
   ValidationPipe,
 } from '@nestjs/common';
 import { CallsService } from './calls.service';
 import { ScheduleCallDto } from './dto/schedule-call.dto';
+import { ToggleCallDto } from './dto/toggle-call.dto';
 import { ScheduledCall } from './interfaces/scheduled-call.interface';
 
 @Controller('calls')
@@ -52,6 +54,29 @@ export class CallsController {
   }
 
   /**
+   * 통화 예약 토글 (활성화/비활성화) API
+   * @param toggleCallDto 통화 토글 정보
+   * @returns 토글된 통화 정보
+   */
+  @Post('toggle')
+  toggleScheduledCall(
+    @Body(new ValidationPipe()) toggleCallDto: ToggleCallDto,
+  ): ScheduledCall {
+    console.log('toggleScheduledCall', toggleCallDto);
+    try {
+      return this.callsService.toggleScheduledCall(toggleCallDto);
+    } catch (error) {
+      if (
+        error.message.includes('없습니다') ||
+        error.message.includes('권한이 없는')
+      ) {
+        throw new HttpException(error.message, HttpStatus.NOT_FOUND);
+      }
+      throw new HttpException(error.message, HttpStatus.BAD_REQUEST);
+    }
+  }
+
+  /**
    * 예약된 통화 목록 조회 API
    * @returns 예약된 통화 목록
    */
@@ -62,11 +87,41 @@ export class CallsController {
   }
 
   /**
+   * 특정 회원의 예약된 통화 목록 조회 API
+   * @param memberSeq 회원 번호
+   * @returns 해당 회원의 예약된 통화 목록
+   */
+  @Get('member/:memberSeq')
+  getScheduledCallsByMemberSeq(
+    @Param('memberSeq') memberSeq: string,
+    @Query('memberSeq') queryMemberSeq?: string,
+  ): ScheduledCall[] {
+    const targetMemberSeq = Number(queryMemberSeq || memberSeq);
+    console.log('getScheduledCallsByMemberSeq', targetMemberSeq);
+
+    if (isNaN(targetMemberSeq)) {
+      throw new HttpException(
+        '유효하지 않은 회원 번호입니다.',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
+    try {
+      return this.callsService.getScheduledCallsByMemberSeq(targetMemberSeq);
+    } catch (error) {
+      if (error.message.includes('없습니다')) {
+        throw new HttpException(error.message, HttpStatus.NOT_FOUND);
+      }
+      throw new HttpException(error.message, HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  /**
    * 특정 ID의 예약된 통화 조회 API
    * @param uuid 통화 ID
    * @returns 예약된 통화 정보
    */
-  @Get(':uuid')
+  @Get(':id')
   getScheduledCallById(@Param('uuid') uuid: string): ScheduledCall {
     console.log('getScheduledCallById', uuid);
     try {
