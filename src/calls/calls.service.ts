@@ -570,7 +570,7 @@ export class CallsService {
         },
         android: {
           priority: 'high' as const,
-          ttl: 60 * 1000, // 1분
+          ttl: 30 * 1000, // 30초
           data: {
             channel_id: 'incoming_calls',
           },
