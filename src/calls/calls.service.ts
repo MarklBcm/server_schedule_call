@@ -27,7 +27,7 @@ export class CallsService {
     if (existingCallUuids && existingCallUuids.length > 0) {
       // 기존 예약 취소 (첫 번째 통화만 취소)
       try {
-        this.cancelScheduledCall(existingCallUuids[0]);
+        this.cancelScheduledCall(scheduleCallDto.uuid);
         this.logger.log(
           `회원 ${scheduleCallDto.memberSeq}의 기존 예약이 취소되었습니다.`,
         );
