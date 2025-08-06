@@ -6,6 +6,7 @@ import * as admin from 'firebase-admin';
 import * as apn from 'apn';
 import { ScheduleCallDto } from './dto/schedule-call.dto';
 import { ToggleCallDto } from './dto/toggle-call.dto';
+import { CallResponseDto, CallResponseStatus } from './dto/call-response.dto';
 import { ScheduledCall } from './interfaces/scheduled-call.interface';
 
 @Injectable()
@@ -13,6 +14,7 @@ export class CallsService {
   private readonly logger = new Logger(CallsService.name);
   private scheduledCalls: Map<string, ScheduledCall> = new Map();
   private memberCallMap: Map<number, string[]> = new Map(); // 회원 번호와 UUID 배열 매핑
+  private callTimeouts: Map<string, NodeJS.Timeout> = new Map(); // 통화 타임아웃 관리
 
   constructor(private schedulerRegistry: SchedulerRegistry) {}
 
@@ -208,6 +210,9 @@ export class CallsService {
     } catch (error) {
       this.logger.error(`크론 작업 취소 중 오류 발생: ${error.message}`);
     }
+
+    // 통화 타임아웃 정리
+    this.clearCallTimeout(uuid);
 
     // 상태 업데이트
     call.status = 'cancelled';
@@ -426,7 +431,7 @@ export class CallsService {
     this.memberCallMap.get(scheduleCallDto.memberSeq).push(uuid);
 
     // 즉시 통화 시작
-    this.initiateCall(scheduledCall);
+    this.initiateCall(scheduledCall, true);
 
     this.logger.log(
       `즉시 통화가 시작되었습니다. ID: ${uuid}, 회원: ${scheduleCallDto.memberSeq}, 시간: ${currentTime}, 플랫폼: ${scheduleCallDto.platform}`,
@@ -438,12 +443,19 @@ export class CallsService {
   /**
    * 통화 시작 메서드
    * @param call 예약된 통화 정보
+   * @param isImmediateCall 즉시 통화 여부 (true인 경우 알림 전송 후 데이터 삭제)
    */
-  private async initiateCall(call: ScheduledCall): Promise<void> {
+  private async initiateCall(
+    call: ScheduledCall,
+    isImmediateCall: boolean = false,
+  ): Promise<void> {
     try {
       // 통화 상태 업데이트
       call.status = 'completed';
       this.scheduledCalls.set(call.uuid, call);
+
+      // 통화 응답 대기 타임아웃 설정 (60초)
+      this.setCallTimeout(call.uuid, 60000); // 60초 후 자동으로 missed 처리
 
       // Firebase가 초기화되었는지 확인
       if (admin.apps.length === 0) {
@@ -453,6 +465,11 @@ export class CallsService {
         this.logger.log(
           `[테스트 모드] 통화 알림이 전송되었습니다. ID: ${call.uuid}, 디바이스: ${call.deviceToken}, 플랫폼: ${call.platform}`,
         );
+
+        // 즉시 콜인 경우 데이터 삭제
+        if (isImmediateCall) {
+          this.removeImmediateCallData(call);
+        }
         return;
       }
 
@@ -464,8 +481,47 @@ export class CallsService {
         // Android용 FCM 메시지 구성
         await this.sendAndroidFcmNotification(call);
       }
+
+      // 즉시 콜인 경우 알림 전송 후 데이터 삭제
+      if (isImmediateCall) {
+        this.removeImmediateCallData(call);
+        this.logger.log(
+          `즉시 통화 데이터가 메모리에서 제거되었습니다. ID: ${call.uuid}, 회원: ${call.memberSeq}`,
+        );
+      }
     } catch (error) {
       this.logger.error(`통화 시작 중 오류 발생: ${error.message}`);
+
+      // 즉시 콜인 경우 오류 발생 시에도 데이터 삭제
+      if (isImmediateCall) {
+        this.removeImmediateCallData(call);
+        this.logger.log(
+          `즉시 통화 오류 발생으로 데이터가 메모리에서 제거되었습니다. ID: ${call.uuid}, 회원: ${call.memberSeq}`,
+        );
+      }
+    }
+  }
+
+  /**
+   * 즉시 통화 데이터를 메모리에서 제거
+   * @param call 제거할 통화 정보
+   */
+  private removeImmediateCallData(call: ScheduledCall): void {
+    // 통화 타임아웃 정리
+    this.clearCallTimeout(call.uuid);
+
+    // scheduledCalls Map에서 제거
+    this.scheduledCalls.delete(call.uuid);
+
+    // memberCallMap에서 제거
+    const memberUuids = this.memberCallMap.get(call.memberSeq);
+    if (memberUuids) {
+      const updatedUuids = memberUuids.filter((uuid) => uuid !== call.uuid);
+      if (updatedUuids.length === 0) {
+        this.memberCallMap.delete(call.memberSeq);
+      } else {
+        this.memberCallMap.set(call.memberSeq, updatedUuids);
+      }
     }
   }
 
@@ -566,7 +622,7 @@ export class CallsService {
           caller_name: call.callerName,
           caller_avatar: call.callerAvatar || '',
           call_purpose: call.callPurpose || '',
-          timestamp: new Date().toISOString(), // 알림 발송 시점의 타임스탬프
+          timestamp: new Date().toISOString(), // 알림 발송 시점의 타임스탬프ß
         },
         android: {
           priority: 'high' as const,
@@ -589,6 +645,277 @@ export class CallsService {
   }
 
   /**
+   * 통화 응답 대기 타임아웃 설정
+   * @param uuid 통화 UUID
+   * @param timeoutMs 타임아웃 시간 (밀리초)
+   */
+  private setCallTimeout(uuid: string, timeoutMs: number): void {
+    // 기존 타임아웃이 있다면 제거
+    this.clearCallTimeout(uuid);
+
+    const timeout = setTimeout(() => {
+      this.handleCallTimeout(uuid);
+    }, timeoutMs);
+
+    this.callTimeouts.set(uuid, timeout);
+    this.logger.log(
+      `통화 타임아웃 설정됨. ID: ${uuid}, 대기 시간: ${timeoutMs / 1000}초`,
+    );
+  }
+
+  /**
+   * 통화 타임아웃 제거
+   * @param uuid 통화 UUID
+   */
+  private clearCallTimeout(uuid: string): void {
+    const timeout = this.callTimeouts.get(uuid);
+    if (timeout) {
+      clearTimeout(timeout);
+      this.callTimeouts.delete(uuid);
+      this.logger.debug(`통화 타임아웃 제거됨. ID: ${uuid}`);
+    }
+  }
+
+  /**
+   * 통화 타임아웃 처리 (자동으로 missed 상태로 변경)
+   * @param uuid 통화 UUID
+   */
+  private handleCallTimeout(uuid: string): void {
+    const call = this.scheduledCalls.get(uuid);
+    if (!call) {
+      this.logger.warn(
+        `타임아웃 처리 중 통화 정보를 찾을 수 없습니다. ID: ${uuid}`,
+      );
+      return;
+    }
+
+    // 이미 응답이 있는 경우 타임아웃 처리하지 않음
+    if (call.responseStatus) {
+      this.logger.debug(
+        `통화가 이미 응답되어 타임아웃 처리를 건너뜁니다. ID: ${uuid}, 상태: ${call.responseStatus}`,
+      );
+      return;
+    }
+
+    // missed 상태로 자동 처리
+    call.responseStatus = 'missed';
+    call.responseTime = new Date();
+    call.responseAdditionalInfo = '응답 시간 초과 (자동 처리)';
+    this.scheduledCalls.set(uuid, call);
+
+    // 타임아웃 정리
+    this.callTimeouts.delete(uuid);
+
+    // 로그 기록
+    this.logCallResponse(call, CallResponseStatus.MISSED);
+
+    this.logger.warn(
+      `통화 응답 시간 초과로 자동으로 놓침 처리되었습니다. ID: ${uuid}, 회원: ${call.memberSeq}`,
+    );
+  }
+
+  /**
+   * 사용자 통화 응답 처리 메서드
+   * @param callResponseDto 통화 응답 정보
+   * @returns 업데이트된 통화 정보
+   */
+  handleCallResponse(callResponseDto: CallResponseDto): ScheduledCall {
+    const { uuid, status, responseTime, additionalInfo } = callResponseDto;
+
+    // 통화 정보 조회
+    const call = this.scheduledCalls.get(uuid);
+    if (!call) {
+      throw new NotFoundException(`ID: ${uuid}에 해당하는 통화가 없습니다.`);
+    }
+
+    // 응답 시간 처리
+    const parsedResponseTime = responseTime
+      ? new Date(responseTime)
+      : new Date();
+
+    // 통화 응답 정보 업데이트
+    call.responseStatus = status;
+    call.responseTime = parsedResponseTime;
+    call.responseAdditionalInfo = additionalInfo;
+
+    // 통화 상태도 완료로 업데이트
+    if (call.status === 'scheduled') {
+      call.status = 'completed';
+    }
+
+    // 업데이트된 정보 저장
+    this.scheduledCalls.set(uuid, call);
+
+    // 타임아웃 제거 (사용자가 응답했으므로)
+    this.clearCallTimeout(uuid);
+
+    // 상태별 로그 기록
+    this.logCallResponse(call, status);
+
+    return call;
+  }
+
+  /**
+   * 통화 응답 상태에 따른 상세 로그 기록
+   * @param call 통화 정보
+   * @param status 응답 상태
+   */
+  private logCallResponse(
+    call: ScheduledCall,
+    status: CallResponseStatus,
+  ): void {
+    const logBase = `회원 ${call.memberSeq}, 통화 ID: ${call.uuid}, 플랫폼: ${call.platform}`;
+    const responseTimeStr = call.responseTime?.toLocaleString('ko-KR', {
+      timeZone: 'Asia/Seoul',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    });
+
+    switch (status) {
+      case CallResponseStatus.ANSWERED:
+        this.logger.log(
+          `📞 ✅ [통화 수락] ${logBase}, 응답 시간: ${responseTimeStr}${
+            call.responseAdditionalInfo
+              ? `, 추가 정보: ${call.responseAdditionalInfo}`
+              : ''
+          }`,
+        );
+        break;
+
+      case CallResponseStatus.DECLINED:
+        this.logger.warn(
+          `📞 ❌ [통화 거절] ${logBase}, 응답 시간: ${responseTimeStr}${
+            call.responseAdditionalInfo
+              ? `, 추가 정보: ${call.responseAdditionalInfo}`
+              : ''
+          }`,
+        );
+        break;
+
+      case CallResponseStatus.MISSED:
+        this.logger.error(
+          `📞 ⏰ [통화 놓침] ${logBase}, 응답 시간: ${responseTimeStr}${
+            call.responseAdditionalInfo
+              ? `, 추가 정보: ${call.responseAdditionalInfo}`
+              : ''
+          }`,
+        );
+        break;
+
+      default:
+        this.logger.debug(
+          `📞 ❓ [알 수 없는 응답] ${logBase}, 상태: ${status}, 응답 시간: ${responseTimeStr}`,
+        );
+    }
+  }
+
+  /**
+   * 통화 응답 통계 조회
+   * @param memberSeq 회원 번호 (선택사항)
+   * @returns 통화 응답 통계
+   */
+  getCallResponseStats(memberSeq?: number): {
+    totalCalls: number;
+    answered: number;
+    declined: number;
+    missed: number;
+    noResponse: number;
+    answerRate: string;
+  } {
+    let calls: ScheduledCall[];
+
+    if (memberSeq) {
+      // 특정 회원의 통화만 조회
+      const uuids = this.memberCallMap.get(memberSeq) || [];
+      calls = uuids
+        .map((uuid) => this.scheduledCalls.get(uuid))
+        .filter((call) => call !== undefined);
+    } else {
+      // 전체 통화 조회
+      calls = Array.from(this.scheduledCalls.values());
+    }
+
+    // 완료된 통화만 필터링
+    const completedCalls = calls.filter((call) => call.status === 'completed');
+
+    const stats = {
+      totalCalls: completedCalls.length,
+      answered: 0,
+      declined: 0,
+      missed: 0,
+      noResponse: 0,
+    };
+
+    completedCalls.forEach((call) => {
+      switch (call.responseStatus) {
+        case 'answered':
+          stats.answered++;
+          break;
+        case 'declined':
+          stats.declined++;
+          break;
+        case 'missed':
+          stats.missed++;
+          break;
+        default:
+          stats.noResponse++;
+      }
+    });
+
+    // 응답률 계산 (수락 + 거절) / 전체
+    const responseRate =
+      stats.totalCalls > 0
+        ? (
+            ((stats.answered + stats.declined) / stats.totalCalls) *
+            100
+          ).toFixed(1)
+        : '0.0';
+
+    return {
+      ...stats,
+      answerRate: `${responseRate}%`,
+    };
+  }
+
+  /**
+   * 통화 응답 이력 조회
+   * @param memberSeq 회원 번호
+   * @returns 통화 응답 이력 목록
+   */
+  getCallResponseHistory(memberSeq: number): {
+    uuid: string;
+    scheduledTime: string;
+    responseStatus?: string;
+    responseTime?: string;
+    callerName: string;
+    platform: string;
+  }[] {
+    const uuids = this.memberCallMap.get(memberSeq) || [];
+    const calls = uuids
+      .map((uuid) => this.scheduledCalls.get(uuid))
+      .filter((call) => call !== undefined && call.status === 'completed');
+
+    return calls.map((call) => ({
+      uuid: call.uuid,
+      scheduledTime: call.scheduledTime.toLocaleString('ko-KR', {
+        timeZone: 'Asia/Seoul',
+      }),
+      responseStatus: call.responseStatus || '응답 없음',
+      responseTime: call.responseTime
+        ? call.responseTime.toLocaleString('ko-KR', {
+            timeZone: 'Asia/Seoul',
+          })
+        : undefined,
+      callerName: call.callerName,
+      platform: call.platform,
+    }));
+  }
+
+  /**
    * 매일 자정에 완료된 통화 정리
    */
   @Cron('0 0 0 * * *', {
@@ -605,6 +932,9 @@ export class CallsService {
         (call.status === 'completed' || call.status === 'cancelled') &&
         call.scheduledTime < twentyFourHoursAgo
       ) {
+        // 통화 타임아웃 정리
+        this.clearCallTimeout(id);
+
         this.scheduledCalls.delete(id);
         // 회원 매핑에서도 제거
         const memberUuids = this.memberCallMap.get(call.memberSeq);

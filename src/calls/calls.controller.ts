@@ -13,6 +13,7 @@ import {
 import { CallsService } from './calls.service';
 import { ScheduleCallDto } from './dto/schedule-call.dto';
 import { ToggleCallDto } from './dto/toggle-call.dto';
+import { CallResponseDto } from './dto/call-response.dto';
 import { ScheduledCall } from './interfaces/scheduled-call.interface';
 
 @Controller('calls')
@@ -135,6 +136,88 @@ export class CallsController {
       if (error.message.includes('존재하지 않는')) {
         throw new HttpException(error.message, HttpStatus.NOT_FOUND);
       }
+      throw new HttpException(error.message, HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  /**
+   * 통화 응답 처리 API (수락/거절/놓침)
+   * @param callResponseDto 통화 응답 정보
+   * @returns 업데이트된 통화 정보
+   */
+  @Post('response')
+  handleCallResponse(
+    @Body(new ValidationPipe()) callResponseDto: CallResponseDto,
+  ): ScheduledCall {
+    console.log('handleCallResponse', callResponseDto);
+    try {
+      return this.callsService.handleCallResponse(callResponseDto);
+    } catch (error) {
+      if (error.message.includes('없습니다')) {
+        throw new HttpException(error.message, HttpStatus.NOT_FOUND);
+      }
+      throw new HttpException(error.message, HttpStatus.BAD_REQUEST);
+    }
+  }
+
+  /**
+   * 통화 응답 통계 조회 API
+   * @param memberSeq 회원 번호 (선택사항)
+   * @returns 통화 응답 통계
+   */
+  @Get('stats')
+  getCallResponseStats(@Query('memberSeq') memberSeq?: string): {
+    totalCalls: number;
+    answered: number;
+    declined: number;
+    missed: number;
+    noResponse: number;
+    answerRate: string;
+  } {
+    const parsedMemberSeq = memberSeq ? Number(memberSeq) : undefined;
+    console.log('getCallResponseStats', parsedMemberSeq);
+
+    if (memberSeq && isNaN(parsedMemberSeq)) {
+      throw new HttpException(
+        '유효하지 않은 회원 번호입니다.',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
+    try {
+      return this.callsService.getCallResponseStats(parsedMemberSeq);
+    } catch (error) {
+      throw new HttpException(error.message, HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  /**
+   * 특정 회원의 통화 응답 이력 조회 API
+   * @param memberSeq 회원 번호
+   * @returns 통화 응답 이력 목록
+   */
+  @Get('history/:memberSeq')
+  getCallResponseHistory(@Param('memberSeq') memberSeq: string): {
+    uuid: string;
+    scheduledTime: string;
+    responseStatus?: string;
+    responseTime?: string;
+    callerName: string;
+    platform: string;
+  }[] {
+    const parsedMemberSeq = Number(memberSeq);
+    console.log('getCallResponseHistory', parsedMemberSeq);
+
+    if (isNaN(parsedMemberSeq)) {
+      throw new HttpException(
+        '유효하지 않은 회원 번호입니다.',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
+    try {
+      return this.callsService.getCallResponseHistory(parsedMemberSeq);
+    } catch (error) {
       throw new HttpException(error.message, HttpStatus.INTERNAL_SERVER_ERROR);
     }
   }

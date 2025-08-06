@@ -51,4 +51,19 @@ export interface ScheduledCall {
    * 예약 활성화 여부
    */
   enabled: boolean;
+
+  /**
+   * 사용자 응답 상태 (통화 수락, 거절, 놓침)
+   */
+  responseStatus?: 'answered' | 'declined' | 'missed';
+
+  /**
+   * 사용자 응답 시간
+   */
+  responseTime?: Date;
+
+  /**
+   * 추가 정보 (응답 관련)
+   */
+  responseAdditionalInfo?: string;
 }
